@@ -152,10 +152,8 @@ void loop() {
     return;
   }
 
-  // Copy feature buffer to input tensor
-  for (int i = 0; i < kFeatureElementCount; i++) {
-    model_input_buffer[i] = feature_buffer[i];
-  }
+  // Copy feature buffer to input tensor in one shot
+  memcpy(model_input_buffer, feature_buffer, sizeof(feature_buffer));
 
   // Run the model on the spectrogram input and make sure it succeeds.
   TfLiteStatus invoke_status = interpreter->Invoke();

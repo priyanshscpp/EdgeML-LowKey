@@ -1,0 +1,5 @@
+numpy
+soundfile
+librosa
+tensorflow==2.16.1
+

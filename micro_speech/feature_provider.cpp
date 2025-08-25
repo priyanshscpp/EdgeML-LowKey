@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "feature_provider.h"
 
+#include <cstring>
+#include <cstdint>
+
 #include "audio_provider.h"
 #include "micro_features_micro_features_generator.h"
 #include "micro_features_micro_model_settings.h"
@@ -84,16 +87,12 @@ TfLiteStatus FeatureProvider::PopulateFeatureData(int32_t last_time_in_ms,
   // | data@80ms | --          |  <empty>  |
   // +-----------+             +-----------+
   if (slices_to_keep > 0) {
-    for (int dest_slice = 0; dest_slice < slices_to_keep; ++dest_slice) {
-      int8_t* dest_slice_data =
-          feature_data_ + (dest_slice * kFeatureSliceSize);
-      const int src_slice = dest_slice + slices_to_drop;
-      const int8_t* src_slice_data =
-          feature_data_ + (src_slice * kFeatureSliceSize);
-      for (int i = 0; i < kFeatureSliceSize; ++i) {
-        dest_slice_data[i] = src_slice_data[i];
-      }
-    }
+    // Single memmove since regions overlap in-place.
+    int8_t* dest = feature_data_;
+    const int8_t* src = feature_data_ + (slices_to_drop * kFeatureSliceSize);
+    const size_t bytes = static_cast<size_t>(slices_to_keep) *
+                         static_cast<size_t>(kFeatureSliceSize);
+    memmove(dest, src, bytes);
   }
   // Any slices that need to be filled in with feature data have their
   // appropriate audio data pulled, and features calculated for that slice.
@@ -104,8 +103,14 @@ TfLiteStatus FeatureProvider::PopulateFeatureData(int32_t last_time_in_ms,
       const int32_t slice_start_ms = (new_step * kFeatureSliceStrideMs);
       int16_t* audio_samples = nullptr;
       int audio_samples_size = 0;
-      GetAudioSamples(slice_start_ms, kFeatureSliceDurationMs,
-                      &audio_samples_size, &audio_samples);
+      TfLiteStatus audio_status = GetAudioSamples(
+          slice_start_ms, kFeatureSliceDurationMs, &audio_samples_size,
+          &audio_samples);
+      if (audio_status != kTfLiteOk || audio_samples == nullptr) {
+        MicroPrintf("GetAudioSamples() failed slice %d @%dms", new_slice,
+                    slice_start_ms);
+        return kTfLiteError;
+      }
       constexpr int wanted =
           kFeatureSliceDurationMs * (kAudioSampleFrequency / 1000);
       if (audio_samples_size != wanted) {

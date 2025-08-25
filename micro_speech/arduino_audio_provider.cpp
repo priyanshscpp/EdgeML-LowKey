@@ -21,6 +21,9 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <cstdint>
+#include "Arduino.h"
 
 #include "PDM.h"
 #include "audio_provider.h"
@@ -58,15 +61,33 @@ void CaptureSamples() {
       g_latest_audio_timestamp * (kAudioSampleFrequency / 1000);
   // Determine the index of this sample in our ring buffer
   const int capture_index = start_sample_offset % kAudioCaptureBufferSize;
-  // Read the data to the correct place in our buffer
-  int num_read =
-      PDM.read(g_audio_capture_buffer + capture_index, DEFAULT_PDM_BUFFER_SIZE);
-  if (num_read != DEFAULT_PDM_BUFFER_SIZE) {
-    MicroPrintf("### short read (%d/%d) @%dms", num_read,
-                DEFAULT_PDM_BUFFER_SIZE, time_in_ms);
-    while (true) {
-      // NORETURN
-    }
+
+  // Read into a temporary contiguous buffer, then scatter into the ring.
+  // This avoids partial writes when capture_index is near the end of the ring.
+  static int16_t pdm_temp_buffer[DEFAULT_PDM_BUFFER_SIZE / 2];
+  const int bytes_requested = DEFAULT_PDM_BUFFER_SIZE;
+  int num_read_bytes = PDM.read(pdm_temp_buffer, bytes_requested);
+  if (num_read_bytes != bytes_requested) {
+    MicroPrintf("### short read (%d/%d) @%dms", num_read_bytes,
+                bytes_requested, time_in_ms);
+    // Gracefully drop this frame to avoid wedging the system.
+    return;
+  }
+
+  // Scatter copy into ring buffer with wrap handling.
+  const int samples_to_end =
+      kAudioCaptureBufferSize - capture_index;
+  if (number_of_samples <= samples_to_end) {
+    memcpy(g_audio_capture_buffer + capture_index, pdm_temp_buffer,
+           bytes_requested);
+  } else {
+    const int first_part_samples = samples_to_end;
+    const int first_part_bytes = first_part_samples * sizeof(int16_t);
+    const int second_part_samples = number_of_samples - first_part_samples;
+    memcpy(g_audio_capture_buffer + capture_index, pdm_temp_buffer,
+           first_part_bytes);
+    memcpy(g_audio_capture_buffer, pdm_temp_buffer + first_part_samples,
+           second_part_samples * sizeof(int16_t));
   }
   // This is how we let the outside world know that new audio data has arrived.
   g_latest_audio_timestamp = time_in_ms;
@@ -77,11 +98,21 @@ TfLiteStatus InitAudioRecording() {
     // Hook up the callback that will be called with each sample
     PDM.onReceive(CaptureSamples);
     // Start listening for audio: MONO @ 16KHz
-    PDM.begin(1, kAudioSampleFrequency);
+    bool begin_ok = PDM.begin(1, kAudioSampleFrequency);
     // gain: -20db (min) + 6.5db (13) + 3.2db (builtin) = -10.3db
     PDM.setGain(13);
-    // Block until we have our first audio sample
+    if (!begin_ok) {
+      MicroPrintf("PDM.begin() failed");
+      return kTfLiteError;
+    }
+    // Block until we have our first audio sample or timeout.
+    const uint32_t start_ms = millis();
     while (!g_latest_audio_timestamp) {
+      if ((millis() - start_ms) > 2000u) {
+        MicroPrintf("Timed out waiting for first audio sample");
+        return kTfLiteError;
+      }
+      delay(1);
     }
     g_is_audio_initialized = true;
   }
@@ -104,12 +135,18 @@ TfLiteStatus GetAudioSamples(int start_ms, int duration_ms,
   // Determine how many samples we want in total
   const int duration_sample_count =
       duration_ms * (kAudioSampleFrequency / 1000);
-  for (int i = 0; i < duration_sample_count; ++i) {
-    // For each sample, transform its index in the history of all samples into
-    // its index in g_audio_capture_buffer
-    const int capture_index = (start_offset + i) % kAudioCaptureBufferSize;
-    // Write the sample to the output buffer
-    g_audio_output_buffer[i] = g_audio_capture_buffer[capture_index];
+  // Fast path: perform at most two memcpy with wrap-around
+  const int first_index = start_offset % kAudioCaptureBufferSize;
+  const int contiguous =
+      std::min(duration_sample_count, kAudioCaptureBufferSize - first_index);
+  memcpy(g_audio_output_buffer,
+         g_audio_capture_buffer + first_index,
+         contiguous * sizeof(int16_t));
+  const int remaining = duration_sample_count - contiguous;
+  if (remaining > 0) {
+    memcpy(g_audio_output_buffer + contiguous,
+           g_audio_capture_buffer,
+           remaining * sizeof(int16_t));
   }
 
   // Set pointers to provide access to the audio

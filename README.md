@@ -1,88 +1,46 @@
-# High-Accuracy Keyword Spotting on Edge
+## Edge ML based Real-Time Keyword Spotting System
 
-## Overview
+### Project Overview
+Production-grade, real-time keyword spotting optimized for microcontrollers (ESP32-class) and validated on desktop with TensorFlow Lite. Detects: "all", "must", "none", "never", "only" (+ silence, unknown).
 
-This project aims to develop a low-power, real-time audio analysis embedded system to detect specific absolutist keywords, which can be used as markers for mental health language. The system will be designed using an Arduino Nano BLE Sense board equipped with a digital microphone, allowing for audio data collection, model training, and real-time keyword detection.
+ESP32 (if you want to run on ESP32)
+Replace the audio provider with an I2S-based implementation (16 kHz, mono, 16-bit)
+Keep ring buffer size ≥ 16× DMA frame and set appropriate FreeRTOS task priorities.
 
-## Project Phases
+### Features
+- Robust streaming audio pipeline with wrap-safe ring buffer
+- Efficient feature pipeline and memcpy-based shifting
+- TFLM inference with compact op resolver
+- Deterministic command smoothing/suppression
+- Python accuracy and latency harnesses
 
-### Phase 1: Data Collection
-1. **Gather Audio Samples**: Record audio samples for a set of given absolutist keywords.
-2. **Expand Dataset**: Integrate the gathered audio samples with the existing Speech Command dataset to create a comprehensive keyword spotting dataset.
+### Tech Stack
+- C/C++, FreeRTOS concepts, TFLite Micro
+- Reference board: Arduino Nano 33 BLE Sense; adaptable to ESP32 (I2S)
+- Python 3.10+ for desktop validation
 
-### Phase 2: Model Training
-3. **Feature Extraction**: Extract relevant features from the audio data using techniques discussed in class (e.g., MFCCs, spectrograms).
-4. **Model Training**: Train a machine learning model to detect the absolutist keywords using the extracted features.
-5. **Model Validation**: Validate the model to ensure it accurately identifies the keywords.
+### Setup (Desktop)
+```
+pip install -r scripts/requirements.txt
+python scripts/evaluate_accuracy.py --model models/float_model.tflite --data_dir testing_audios
+python scripts/benchmark_latency.py --model models/float_model.tflite
+```
 
-### Phase 3: Deployment and Testing
-6. **Deploy Model**: Implement the trained model on the Arduino Nano BLE Sense board.
-7. **Real-Time Testing**: Test the system for real-time keyword spotting and evaluate its performance.
+### Build (Arduino reference)
+- Open `micro_speech/micro_speech.ino` in Arduino IDE with Arduino_TensorFlowLite installed. Flash to Nano 33 BLE Sense.
 
-## Dataset
+ESP32 notes:
+- Replace `micro_speech/arduino_audio_provider.cpp` with an I2S provider (16 kHz, mono, 16-bit) and keep ring buffer sizing equal or larger.
 
-The dataset will consist of:
-- Audio samples of absolutist keywords recorded specifically for this project.
+### Usage
+Device continuously listens; detections print over serial. LED toggles each inference on reference board.
 
-## Setup 
+### Performance
+- Target on-device accuracy: ~95% for trained keywords
+- Desktop latency stats printed by `benchmark_latency.py`
 
-1. **Record Audio Samples**:
-   - Use a recording device to collect audio samples of the following absolutist keywords: “all,” “must,” “never,” “none,”, “only”, and “silence”
-   - Save these samples in the `data/keywords` directory.
-   - [Open Speech Recording tool](https://tinyml.seas.harvard.edu/open_speech_recording/) can be used to record audio signals.
-   - [Speech Command dataset](https://www.tensorflow.org/datasets/catalog/speech_commands)
- 
-3. **Integrate Dataset**:
-   - Combine the recorded samples with the Speech Command dataset in the `data` directory.
+### Hexagon DSP Tips
+- Align tensors (16B), avoid float, coalesce copies, use int8 kernels, and batch windowed FFTs where applicable.
 
-## Training the Model
-
-Train the model in the cloud using Google Colaboratory or locally using a Jupyter Notebook.
-
-Use [model.ipynb](model.ipynb)
-
-<table class="tfo-notebook-buttons">
-  <td>
-    <a target="_blank" href="https://colab.research.google.com/github/tensorflow/tflite-micro/blob/main/tensorflow/lite/micro/examples/micro_speech/train/train_micro_speech_model.ipynb"><img src="https://www.tensorflow.org/images/colab_logo_32px.png" />Google Colaboratory</a>
-  </td>
-  <td>
-    <a target="_blank" href="https://github.com/tensorflow/tflite-micro/blob/main/tensorflow/lite/micro/examples/micro_speech/train/train_micro_speech_model.ipynb"><img src="https://www.tensorflow.org/images/GitHub-Mark-32px.png" />Jupyter Notebook</a>
-  </td>
-</table>
-*Estimated Training Time: ~2 Hours.*
-
-## Deployment on Arduino Nano BLE Sense
-
-1. **Convert Model**:
-   - Convert the trained model to a format compatible with the Arduino board (e.g., TensorFlow Lite).
-
-2. **Deploy Model**:
-   - Upload the model and the necessary code to the Arduino Nano BLE Sense board.
-   - Refer to [micro_speech](micro_speech) folder.
-
-3. **Real-Time Testing**:
-   -  Fetch testing audios from [testing_audio](testing_audios) folder.
-   -  Test the system for real-time keyword spotting and evaluate its performance.
-
-## Results
-<div>
-  <img width="493" alt="result" src="https://github.com/dheerajkallakuri/High-Accuracy-Keyword-Spotting-on-Edge/assets/23552796/0aa8f0b9-be80-4258-88ad-21c117544e0c">
-</div>
-
-- There is an accuracy of 96% after training.
-- In training unknown and silence words are also included apart from 5 words.
-- The analysis of the confusion matrix revealed that the model exhibited high accuracy in recognizing certain keywords such as "all," "only," and "silence."
-- However, its performance was comparatively weaker when identifying keywords like "must," "none," and "never."
-
-## Video Demonstration
-
-For a visual demonstration of this project, please refer to the video linked below:
-
-[Project Video Demonstration](https://youtube.com/shorts/CLn4Z_gAVmA?feature=share)
-
-[![Project Video Demonstration](https://img.youtube.com/vi/CLn4Z_gAVmA/0.jpg)](https://www.youtube.com/watch?v=CLn4Z_gAVmA)
-
-## Reference
-
-[Tensorflow Lite Micro_Speech](https://github.com/tensorflow/tflite-micro/blob/main/tensorflow/lite/micro/examples/micro_speech/train/README.md#other-training-methods)
-# EdgeML-LowKey
+### License
+Apache 2.0
